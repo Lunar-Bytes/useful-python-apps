@@ -6,3 +6,4 @@ env/
 *.sqlite
 *.exe
 *.zip
+*.bat
