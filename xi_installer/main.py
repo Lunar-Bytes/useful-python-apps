@@ -24,7 +24,7 @@ class CustomInstallDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Xi Installer")
         self.setFixedSize(1280, 720)
-
+        
         layout = QFormLayout()
 
         self.folder_input = QLineEdit()
