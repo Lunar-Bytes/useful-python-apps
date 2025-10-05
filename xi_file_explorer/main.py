@@ -1,17 +1,65 @@
 import sys
 import os
+import re
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTreeView, QListView, QTextEdit,
     QToolBar, QWidget, QHBoxLayout, QLineEdit, QSizePolicy,
     QMenu, QInputDialog, QMessageBox
 )
-from PyQt6.QtGui import QFileSystemModel, QIcon, QAction
+from PyQt6.QtGui import QFileSystemModel, QIcon, QAction, QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PyQt6.QtCore import Qt, QSize, QPoint, QDir
 
 
-TEXT_EXTENSIONS = ['.txt', '.py', '.go', '.c', '.cpp', '.json', '.md', 'html', 'css', 'js']
+TEXT_EXTENSIONS = ['.txt', '.py', '.go', '.c', '.cpp', '.json', '.md', '.html', '.css', '.js']
 
 
+# ---------------- Syntax Highlighter ---------------- #
+class CodeHighlighter(QSyntaxHighlighter):
+    def __init__(self, document, file_extension):
+        super().__init__(document)
+        self.rules = []
+        self.file_extension = file_extension.lower()
+
+        keyword_format = QTextCharFormat()
+        keyword_format.setForeground(QColor("#569CD6"))
+        keyword_format.setFontWeight(QFont.Weight.Bold)
+
+        string_format = QTextCharFormat()
+        string_format.setForeground(QColor("#D69D85"))
+
+        comment_format = QTextCharFormat()
+        comment_format.setForeground(QColor("#6A9955"))
+        comment_format.setFontItalic(True)
+
+        number_format = QTextCharFormat()
+        number_format.setForeground(QColor("#B5CEA8"))
+
+        if self.file_extension == ".py":
+            python_keywords = [
+                "def", "class", "if", "elif", "else", "while", "for", "in",
+                "try", "except", "finally", "import", "from", "as", "with",
+                "return", "break", "continue", "pass", "lambda", "True", "False", "None"
+            ]
+            for kw in python_keywords:
+                self.rules.append((re.compile(rf"\b{kw}\b"), keyword_format))
+            self.rules.append((re.compile(r"#.*"), comment_format))
+            self.rules.append((re.compile(r"(\".*?\"|'.*?')"), string_format))
+            self.rules.append((re.compile(r"\b\d+(\.\d+)?\b"), number_format))
+        elif self.file_extension in ['.c', '.cpp', '.go', '.json', '.md', '.html', '.css', '.js']:
+            # simple coloring rules for other files
+            self.rules.append((re.compile(r"(\".*?\"|'.*?')"), string_format))
+            self.rules.append((re.compile(r"\b\d+(\.\d+)?\b"), number_format))
+            self.rules.append((re.compile(r"//.*"), comment_format))
+            self.rules.append((re.compile(r"/\*.*?\*/", re.DOTALL), comment_format))
+
+    def highlightBlock(self, text):
+        for pattern, fmt in self.rules:
+            for match in pattern.finditer(text):
+                start, end = match.start(), match.end()
+                self.setFormat(start, end - start, fmt)
+
+
+# ---------------- File Explorer ---------------- #
 class FileExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -215,6 +263,9 @@ class FileExplorer(QMainWindow):
             self.text_editor.setText(content)
             self.right_panel = self.text_editor
             self.layout.addWidget(self.right_panel, 4)
+
+            # Apply syntax highlighting
+            self.highlighter = CodeHighlighter(self.text_editor.document(), ext)
 
             # Save on focus out
             self.text_editor.focusOutEvent = lambda event, path=file_path: self.save_text(path, event)
