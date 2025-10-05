@@ -1,14 +1,15 @@
 import sys
 import os
 import re
+import subprocess
+import shutil
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTreeView, QListView, QTextEdit,
     QToolBar, QWidget, QHBoxLayout, QLineEdit, QSizePolicy,
-    QMenu, QInputDialog, QMessageBox
+    QMenu, QInputDialog, QMessageBox, QDialog, QVBoxLayout
 )
 from PyQt6.QtGui import QFileSystemModel, QIcon, QAction, QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PyQt6.QtCore import Qt, QSize, QPoint, QDir
-
 
 TEXT_EXTENSIONS = ['.txt', '.py', '.go', '.c', '.cpp', '.json', '.md', '.html', '.css', '.js']
 
@@ -34,6 +35,7 @@ class CodeHighlighter(QSyntaxHighlighter):
         number_format = QTextCharFormat()
         number_format.setForeground(QColor("#B5CEA8"))
 
+        # Python
         if self.file_extension == ".py":
             python_keywords = [
                 "def", "class", "if", "elif", "else", "while", "for", "in",
@@ -45,8 +47,19 @@ class CodeHighlighter(QSyntaxHighlighter):
             self.rules.append((re.compile(r"#.*"), comment_format))
             self.rules.append((re.compile(r"(\".*?\"|'.*?')"), string_format))
             self.rules.append((re.compile(r"\b\d+(\.\d+)?\b"), number_format))
-        elif self.file_extension in ['.c', '.cpp', '.go', '.json', '.md', '.html', '.css', '.js']:
-            # simple coloring rules for other files
+
+        # C/C++/Go
+        elif self.file_extension in ['.c', '.cpp', '.go']:
+            c_keywords = ["int", "float", "double", "char", "return", "if", "else", "for", "while", "struct", "break", "continue"]
+            for kw in c_keywords:
+                self.rules.append((re.compile(rf"\b{kw}\b"), keyword_format))
+            self.rules.append((re.compile(r"//.*"), comment_format))
+            self.rules.append((re.compile(r"/\*.*?\*/", re.DOTALL), comment_format))
+            self.rules.append((re.compile(r"(\".*?\"|'.*?')"), string_format))
+            self.rules.append((re.compile(r"\b\d+(\.\d+)?\b"), number_format))
+
+        # JSON/Markdown/HTML/CSS/JS/TXT
+        elif self.file_extension in ['.json', '.md', '.html', '.css', '.js', '.txt']:
             self.rules.append((re.compile(r"(\".*?\"|'.*?')"), string_format))
             self.rules.append((re.compile(r"\b\d+(\.\d+)?\b"), number_format))
             self.rules.append((re.compile(r"//.*"), comment_format))
@@ -91,7 +104,7 @@ class FileExplorer(QMainWindow):
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self.open_context_menu)
 
-        # Right panel placeholder (either file list or QTextEdit)
+        # Right panel placeholder
         self.right_panel = self.list_view
 
         # Split layout
@@ -173,13 +186,14 @@ class FileExplorer(QMainWindow):
         if QDir(path).exists():
             self.update_path(path)
 
-    # ================= Right-Click Menu =================
+    # ================= Context Menu =================
     def open_context_menu(self, position: QPoint):
         widget = self.sender()
         index = widget.indexAt(position)
         if not index.isValid():
             return
         file_path = self.model.filePath(index)
+        _, ext = os.path.splitext(file_path)
 
         menu = QMenu()
         create_file_action = QAction("New File", self)
@@ -198,9 +212,16 @@ class FileExplorer(QMainWindow):
         menu.addAction(rename_action)
         menu.addAction(delete_action)
 
+        # Run button for Python files
+        if ext.lower() == ".py":
+            run_action = QAction("Run", self)
+            run_action.triggered.connect(lambda: self.run_file(file_path))
+            menu.addSeparator()
+            menu.addAction(run_action)
+
         menu.exec(widget.viewport().mapToGlobal(position))
 
-    # ================= File Actions =================
+    # ================= File Operations =================
     def create_file(self, base_path):
         if os.path.isfile(base_path):
             base_path = os.path.dirname(base_path)
@@ -239,7 +260,7 @@ class FileExplorer(QMainWindow):
                 if os.path.isfile(file_path):
                     os.remove(file_path)
                 else:
-                    os.rmdir(file_path)
+                    shutil.rmtree(file_path)  # recursive delete
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete:\n{e}")
 
@@ -254,24 +275,19 @@ class FileExplorer(QMainWindow):
             except Exception:
                 content = ""
 
-            # Replace right panel with QTextEdit
             if hasattr(self, 'text_editor'):
                 self.layout.removeWidget(self.text_editor)
                 self.text_editor.deleteLater()
 
             self.text_editor = QTextEdit()
-            self.text_editor.setText(content)
-            self.right_panel = self.text_editor
-            self.layout.addWidget(self.right_panel, 4)
-
-            # Apply syntax highlighting
+            self.text_editor.setPlainText(content)
+            self.text_editor.setFont(QFont("Consolas", 11))
             self.highlighter = CodeHighlighter(self.text_editor.document(), ext)
 
-            # Save on focus out
+            self.right_panel = self.text_editor
+            self.layout.addWidget(self.right_panel, 4)
             self.text_editor.focusOutEvent = lambda event, path=file_path: self.save_text(path, event)
-
         else:
-            # If non-text file, restore list view
             if self.right_panel != self.list_view:
                 self.layout.removeWidget(self.right_panel)
                 self.right_panel.deleteLater()
@@ -286,13 +302,39 @@ class FileExplorer(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not save file:\n{e}")
         super(QTextEdit, self.text_editor).focusOutEvent(event)
 
+    # ================= Run Python File =================
+    def run_file(self, file_path):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Running {os.path.basename(file_path)}")
+        dlg.resize(600, 400)
+        layout = QVBoxLayout()
+        output_text = QTextEdit()
+        output_text.setReadOnly(True)
+        layout.addWidget(output_text)
+        dlg.setLayout(layout)
 
+        try:
+            process = subprocess.Popen(
+                [sys.executable, file_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate()
+            output_text.setPlainText(stdout + "\n" + stderr)
+        except Exception as e:
+            output_text.setPlainText(f"Error running file:\n{e}")
+
+        dlg.exec()
+
+
+# ---------------- Main ---------------- #
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
     # Dark theme
-    from PyQt6.QtGui import QPalette, QColor
+    from PyQt6.QtGui import QPalette
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(220, 220, 220))
